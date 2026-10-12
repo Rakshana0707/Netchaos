@@ -1,0 +1,16 @@
+# secrets: never commit
+.env
+*.env
+!.env.example
+comp-networks.env
+# python / node / build
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+frontend/dist/
+# logs and scratch output
+*.log
+*-logs*.txt
+pytest_*.txt
+test_results*.txt

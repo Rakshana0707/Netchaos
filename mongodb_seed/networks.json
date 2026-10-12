@@ -1,0 +1,18 @@
+[
+  {
+    "_id": "net_001",
+    "name": "Campus Network",
+    "created_at": {
+      "$date": "2026-10-01T10:00:00Z"
+    },
+    "id": "net_001"
+  },
+  {
+    "_id": "net_002",
+    "name": "Data Center Ring",
+    "created_at": {
+      "$date": "2026-10-02T09:00:00Z"
+    },
+    "id": "net_002"
+  }
+]

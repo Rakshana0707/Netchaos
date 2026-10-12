@@ -1,0 +1,78 @@
+[
+  {
+    "_id": "sim_001_net001",
+    "network_id": "net_001",
+    "source_node_id": "node_e1_001",
+    "destination_node_id": "node_e2_001",
+    "packet_count": 100,
+    "packet_size": 1500,
+    "random_seed": 42,
+    "store_packets": false,
+    "status": "completed",
+    "route_available": true,
+    "route": [
+      "node_e1_001",
+      "node_s1_001",
+      "node_r1_001",
+      "node_r2_001",
+      "node_s2_001",
+      "node_e2_001"
+    ],
+    "delivered_packets": 99,
+    "dropped_packets": 1,
+    "packet_loss_percentage": 1.0,
+    "path_latency_ms": 6.3,
+    "hop_count": 5,
+    "path_bandwidth_mbps": 100.0,
+    "throughput_mbps": 96.43,
+    "simulated_duration_ms": 12.5,
+    "execution_duration_ms": 45.2,
+    "created_at": {
+      "$date": "2026-10-01T11:00:00Z"
+    },
+    "started_at": {
+      "$date": "2026-10-01T11:00:01Z"
+    },
+    "completed_at": {
+      "$date": "2026-10-01T11:00:01Z"
+    },
+    "id": "sim_001_net001"
+  },
+  {
+    "_id": "sim_002_net001",
+    "network_id": "net_001",
+    "source_node_id": "node_e2_001",
+    "destination_node_id": "node_e1_001",
+    "packet_count": 200,
+    "packet_size": 512,
+    "random_seed": 99,
+    "store_packets": false,
+    "status": "completed",
+    "route_available": true,
+    "route": [
+      "node_e2_001",
+      "node_s2_001",
+      "node_s1_001",
+      "node_e1_001"
+    ],
+    "delivered_packets": 200,
+    "dropped_packets": 0,
+    "packet_loss_percentage": 0.0,
+    "path_latency_ms": 1.8,
+    "hop_count": 3,
+    "path_bandwidth_mbps": 100.0,
+    "throughput_mbps": 195.3,
+    "simulated_duration_ms": 8.2,
+    "execution_duration_ms": 38.7,
+    "created_at": {
+      "$date": "2026-10-01T12:00:00Z"
+    },
+    "started_at": {
+      "$date": "2026-10-01T12:00:01Z"
+    },
+    "completed_at": {
+      "$date": "2026-10-01T12:00:01Z"
+    },
+    "id": "sim_002_net001"
+  }
+]

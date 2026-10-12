@@ -1,0 +1,110 @@
+[
+  {
+    "_id": "node_r1_001",
+    "network_id": "net_001",
+    "name": "Router-1",
+    "status": "active",
+    "ip_address": "10.0.0.1",
+    "created_at": {
+      "$date": "2026-10-01T10:05:00Z"
+    },
+    "id": "node_r1_001",
+    "type": "router"
+  },
+  {
+    "_id": "node_r2_001",
+    "network_id": "net_001",
+    "name": "Router-2",
+    "status": "active",
+    "ip_address": "10.0.0.2",
+    "created_at": {
+      "$date": "2026-10-01T10:05:01Z"
+    },
+    "id": "node_r2_001",
+    "type": "router"
+  },
+  {
+    "_id": "node_s1_001",
+    "network_id": "net_001",
+    "name": "Switch-1",
+    "status": "active",
+    "ip_address": "10.0.1.1",
+    "created_at": {
+      "$date": "2026-10-01T10:05:02Z"
+    },
+    "id": "node_s1_001",
+    "type": "switch"
+  },
+  {
+    "_id": "node_s2_001",
+    "network_id": "net_001",
+    "name": "Switch-2",
+    "status": "active",
+    "ip_address": "10.0.1.2",
+    "created_at": {
+      "$date": "2026-10-01T10:05:03Z"
+    },
+    "id": "node_s2_001",
+    "type": "switch"
+  },
+  {
+    "_id": "node_e1_001",
+    "network_id": "net_001",
+    "name": "Endpoint-1",
+    "status": "active",
+    "ip_address": "10.0.2.1",
+    "created_at": {
+      "$date": "2026-10-01T10:05:04Z"
+    },
+    "id": "node_e1_001",
+    "type": "endpoint"
+  },
+  {
+    "_id": "node_e2_001",
+    "network_id": "net_001",
+    "name": "Endpoint-2",
+    "status": "active",
+    "ip_address": "10.0.2.2",
+    "created_at": {
+      "$date": "2026-10-01T10:05:05Z"
+    },
+    "id": "node_e2_001",
+    "type": "endpoint"
+  },
+  {
+    "_id": "node_r1_002",
+    "network_id": "net_002",
+    "name": "Core-A",
+    "status": "active",
+    "ip_address": "192.168.0.1",
+    "created_at": {
+      "$date": "2026-10-02T09:05:00Z"
+    },
+    "id": "node_r1_002",
+    "type": "router"
+  },
+  {
+    "_id": "node_r2_002",
+    "network_id": "net_002",
+    "name": "Core-B",
+    "status": "active",
+    "ip_address": "192.168.0.2",
+    "created_at": {
+      "$date": "2026-10-02T09:05:01Z"
+    },
+    "id": "node_r2_002",
+    "type": "router"
+  },
+  {
+    "_id": "node_r3_002",
+    "network_id": "net_002",
+    "name": "Core-C",
+    "status": "active",
+    "ip_address": "192.168.0.3",
+    "created_at": {
+      "$date": "2026-10-02T09:05:02Z"
+    },
+    "id": "node_r3_002",
+    "type": "router"
+  }
+]

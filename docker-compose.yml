@@ -1,0 +1,33 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    ports:
+      - "127.0.0.1:27018:27017"   # bound to localhost only (changed to 27018 to avoid conflicts)
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build: ./backend
+    environment:
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/}
+      MONGODB_DATABASE: ${MONGODB_DATABASE:-netchaos}
+    ports:
+      - "8001:8000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "3001:80"
+
+volumes:
+  mongo_data:

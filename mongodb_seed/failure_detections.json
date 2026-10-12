@@ -1,0 +1,29 @@
+[
+  {
+    "_id": "det_001_net001",
+    "network_id": "net_001",
+    "baseline_id": "baseline_001_net001",
+    "overall_status": "critical",
+    "failed_nodes": 1,
+    "failed_links": 0,
+    "degraded_links": 0,
+    "connected_components": 2,
+    "affected_simulations": 1,
+    "unreachable_pairs": 4,
+    "detected_at": {
+      "$date": "2026-10-01T13:05:00Z"
+    },
+    "failures": [
+      {
+        "_id": "fail_001_001",
+        "failure_type": "node_failure",
+        "target_type": "node",
+        "target_id": "node_r2_001",
+        "severity": "critical",
+        "description": "Node Router-2 is down (status changed from active to failed)",
+        "status": "active"
+      }
+    ],
+    "id": "det_001_net001"
+  }
+]
