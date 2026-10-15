@@ -152,12 +152,19 @@ class ChaosService:
             already_reverted=already, reverted_events=reverted_events, restored=restored,
         )
 
-    def reset(self, network_id: str) -> ResetResponse:
+    def reset(self, network_id: str, clear_history: bool = True) -> ResetResponse:
         changes = _Changes.empty()
         self.topology.get_network(network_id, lock=True)
         active = self._experiments(network_id, only_active=True)
         self._revert_experiments(network_id, active, changes)
         self._sync_graph(network_id, changes)
+        if clear_history:
+            self.db.chaos_experiments.delete_many({"network_id": network_id})
+            self.db.chaos_events.delete_many({"network_id": network_id})
+            self.db.recovery_events.delete_many({"network_id": network_id})
+            self.db.failure_detections.delete_many({"network_id": network_id})
+            self.db.traffic_simulations.delete_many({"network_id": network_id})
+            self.db.monitoring_snapshots.delete_many({"network_id": network_id})
         return ResetResponse(network_id=network_id, reverted_experiments=len(active))
 
     def _revert_experiments(self, network_id: str, experiments: list[dict], changes: _Changes) -> int:

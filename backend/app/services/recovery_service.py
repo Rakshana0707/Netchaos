@@ -129,6 +129,29 @@ class RecoveryService:
             )
 
         self._persist(result, start_ts=start_ts, experiment_id=experiment_id, detection_id=detection_id)
+
+        if candidate is not None and result.status == RecoveryStatus.RECOVERED:
+            self.db.traffic_simulations.update_one(
+                {"id": req.simulation_id, "network_id": network_id},
+                {"$set": {
+                    "route": candidate.path,
+                    "path_latency_ms": round(candidate.latency, 6),
+                    "hop_count": candidate.hop_count,
+                    "path_bandwidth_mbps": round(candidate.bandwidth, 6),
+                    "throughput_mbps": round(candidate.bandwidth, 6),
+                    "packet_loss_percentage": 0.0,
+                    "dropped_packets": 0,
+                    "recovered": True,
+                    "status": "completed",
+                    "route_available": True,
+                }}
+            )
+            try:
+                from app.services.monitoring_service import MonitoringService
+                MonitoringService(self.db).create_snapshot(network_id)
+            except Exception:
+                pass
+
         return result
 
     def recover_all(self, network_id: str, strategy: RecoveryStrategy) -> list[RecoveryResponse]:

@@ -4,20 +4,37 @@ import { api } from '../api';
 export function DashboardOverview({ networkId, topology, chaosActive, simulations, onRefresh }) {
   const [current, setCurrent] = useState(null);
   const [history, setHistory] = useState([]);
-  const [activeScenario, setActiveScenario] = useState(null);
-  const [scenarioLogs, setScenarioLogs] = useState([]);
-  const [runningScenario, setRunningScenario] = useState(false);
   const [liveStream, setLiveStream] = useState(true);
+
+  const [resetting, setResetting] = useState(false);
+  const [toast, setToast] = useState(null);
 
   const fetchTelemetry = useCallback(async () => {
     if (!networkId) return;
     try {
-      const [cur, hist] = await Promise.all([
-        api.getMonitoringCurrent(networkId),
-        api.getHistory(networkId)
+      const [cur, chaosHist, recHist] = await Promise.all([
+        api.getMonitoringCurrent(networkId).catch(() => null),
+        api.getChaosHistory(networkId).catch(() => ({ experiments: [] })),
+        api.getRecoveryHistory(networkId).catch(() => [])
       ]);
       setCurrent(cur);
-      setHistory(hist || []);
+      
+      const events = [
+        ...(chaosHist?.experiments || []).map(c => ({
+          id: c.experiment_id,
+          name: `Chaos: ${c.name || c.scenario}`,
+          started_at: c.started_at || c.created_at,
+          status: c.status
+        })),
+        ...(recHist || []).map(r => ({
+          id: r.id || r.recovery_id,
+          name: `Recovery: Flow ${r.simulation_id}`,
+          started_at: r.created_at || r.recovery_end_time,
+          status: (r.recovery_status || r.status || '').toLowerCase()
+        }))
+      ].sort((a, b) => new Date(b.started_at || 0) - new Date(a.started_at || 0));
+      
+      setHistory(events);
     } catch (e) {
       console.warn("Telemetry fetch error:", e);
     }
@@ -30,172 +47,22 @@ export function DashboardOverview({ networkId, topology, chaosActive, simulation
     return () => clearInterval(interval);
   }, [fetchTelemetry, liveStream]);
 
-  const addLog = (msg, status = "running") => {
-    setScenarioLogs(prev => [...prev, { msg, status, time: new Date().toLocaleTimeString() }]);
-  };
-
-  const updateLastLog = (status) => {
-    setScenarioLogs(prev => {
-      if (prev.length === 0) return prev;
-      const copy = [...prev];
-      copy[copy.length - 1] = { ...copy[copy.length - 1], status };
-      return copy;
-    });
-  };
-
-  const runScenario1 = async () => {
-    if (!topology?.nodes?.length || runningScenario) return;
-    setRunningScenario(true);
-    setActiveScenario("⚡ Core Link Outage & SPF Route Healing");
-    setScenarioLogs([]);
-
-    try {
-      const src = topology.nodes[0]?.id;
-      const dst = topology.nodes[topology.nodes.length - 1]?.id;
-      const link = topology.links[0]?.id;
-
-      addLog(`[1/4] Initiating Baseline Traffic Simulation (${src} ➔ ${dst})...`);
-      const sim = await api.createSimulation(networkId, {
-        source: src,
-        destination: dst,
-        packet_count: 500,
-        packet_size: 1500,
-        store_packets: false
-      });
-      await api.runSimulation(networkId, sim.simulation_id);
-      updateLastLog("done");
-
-      addLog(`[2/4] Injecting Chaos: Breaking Core Link (${link})...`);
-      const chaos = await api.injectChaos(networkId, "link_failure", { link_id: link });
-      await api.createMonitoringSnapshot(networkId);
-      updateLastLog("done");
-      await fetchTelemetry();
-
-      addLog(`[3/4] Running Dynamic Route Recovery (Dijkstra Alternate)...`);
-      await api.recoverNetwork(networkId, {
-        strategy: "dijkstra_alternate",
-        simulation_id: sim.simulation_id
-      });
-      updateLastLog("done");
-
-      addLog(`[4/4] Restoring Network: Reverting Link Chaos...`);
-      if (chaos?.experiment_id) {
-        await api.revertChaos(networkId, chaos.experiment_id);
-      }
-      await api.createMonitoringSnapshot(networkId);
-      updateLastLog("done");
-
-      addLog(`🎉 Scenario 1 Completed Successfully! Resilient route verified.`, "done");
-    } catch (err) {
-      addLog(`❌ Scenario Error: ${err.message}`, "fail");
-    } finally {
-      setRunningScenario(false);
-      fetchTelemetry();
-      if (onRefresh) onRefresh();
-    }
-  };
-
-  const runScenario2 = async () => {
-    if (!topology?.nodes?.length || runningScenario) return;
-    setRunningScenario(true);
-    setActiveScenario("🌊 High-Volume Traffic Flood & Congestion");
-    setScenarioLogs([]);
-
-    try {
-      const src = topology.nodes[0]?.id;
-      const dst = topology.nodes[topology.nodes.length - 1]?.id;
-      const link = topology.links[0]?.id;
-
-      addLog(`[1/3] Generating High-Load Packet Stream (2,500 packets)...`);
-      const sim = await api.createSimulation(networkId, {
-        source: src,
-        destination: dst,
-        packet_count: 2500,
-        packet_size: 1500,
-        store_packets: false
-      });
-      await api.runSimulation(networkId, sim.simulation_id);
-      updateLastLog("done");
-
-      addLog(`[2/3] Simulating Network Congestion & 15% Packet Loss on ${link}...`);
-      const chaos = await api.injectChaos(networkId, "packet_loss", {
-        link_id: link,
-        loss_percentage: 15
-      });
-      await api.createMonitoringSnapshot(networkId);
-      updateLastLog("done");
-      await fetchTelemetry();
-
-      addLog(`[3/3] Capturing Real-Time Degraded Telemetry & Reverting...`);
-      if (chaos?.experiment_id) {
-        await api.revertChaos(networkId, chaos.experiment_id);
-      }
-      await api.createMonitoringSnapshot(networkId);
-      updateLastLog("done");
-
-      addLog(`🎉 Scenario 2 Completed! Congestion response recorded.`, "done");
-    } catch (err) {
-      addLog(`❌ Scenario Error: ${err.message}`, "fail");
-    } finally {
-      setRunningScenario(false);
-      fetchTelemetry();
-      if (onRefresh) onRefresh();
-    }
-  };
-
-  const runScenario3 = async () => {
-    if (runningScenario) return;
-    setRunningScenario(true);
-    setActiveScenario("🛡️ Full Resilience Benchmark Suite");
-    setScenarioLogs([]);
-
-    try {
-      addLog(`[1/3] Creating Resilience Benchmark Experiment Plan...`);
-      const src = topology.nodes[0]?.id;
-      const link = topology.links[0]?.id;
-      const plan = await api.createExperimentPlan({
-        name: `Automated Resilience Benchmark - ${new Date().toLocaleTimeString()}`,
-        description: "Comprehensive stress test across nodes and links",
-        network_id: networkId,
-        target_simulations: [],
-        chaos_events: [
-          { type: link ? "link_failure" : "node_failure", ...(link ? { link_id: link } : { node_id: src }) }
-        ],
-        recovery_strategy: "dijkstra_alternate"
-      });
-      updateLastLog("done");
-
-      addLog(`[2/3] Executing Plan Batch & Calculating Impact Scores...`);
-      await api.runExperimentPlan(plan.plan_id);
-      updateLastLog("done");
-
-      addLog(`[3/3] Generating Research Dataset & Updating Analytics...`);
-      await api.createDataset({
-        name: `Benchmark Dataset - ${new Date().toLocaleTimeString()}`,
-        version: "1.0",
-        description: "Real telemetry and recovery traces from live benchmark",
-        filters: {}
-      });
-      updateLastLog("done");
-
-      addLog(`🎉 Full Benchmark Suite Complete! Analytics & Dataset Labs populated.`, "done");
-    } catch (err) {
-      addLog(`❌ Benchmark Error: ${err.message}`, "fail");
-    } finally {
-      setRunningScenario(false);
-      fetchTelemetry();
-      if (onRefresh) onRefresh();
-    }
-  };
-
   const handleResetAllChaos = async () => {
+    setResetting(true);
+    setToast(null);
     try {
       await api.resetChaos(networkId);
       await api.createMonitoringSnapshot(networkId);
-      fetchTelemetry();
-      if (onRefresh) onRefresh();
+      await fetchTelemetry();
+      if (onRefresh) await onRefresh();
+      setToast("Network healed and previous session data cleared! All chaos, flows, and metrics reset to 100% HEALTHY.");
+      setTimeout(() => setToast(null), 4000);
     } catch (e) {
       console.warn("Reset chaos error:", e);
+      setToast(`Reset chaos failed: ${e.message}`);
+      setTimeout(() => setToast(null), 4000);
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -221,7 +88,7 @@ export function DashboardOverview({ networkId, topology, chaosActive, simulation
             Real-Time Network Telemetry & Automated Resilience Chaos Orchestration
           </small>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           <button 
             type="button" 
             className="secondary" 
@@ -234,12 +101,39 @@ export function DashboardOverview({ networkId, topology, chaosActive, simulation
             type="button" 
             className="secondary" 
             onClick={handleResetAllChaos}
-            style={{ padding: '8px 16px', fontSize: '13px', color: '#f87171' }}
+            disabled={resetting}
+            style={{ padding: '8px 16px', fontSize: '13px', color: '#f87171', fontWeight: 'bold' }}
+            title="Heal all severed links and reset all chaos experiments"
           >
-            Heal All & Reset Chaos
+            {resetting ? "Healing Network..." : "Heal All & Reset Chaos"}
           </button>
         </div>
       </div>
+
+      {toast && (
+        <div style={{
+          marginTop: '12px',
+          padding: '10px 16px',
+          background: 'rgba(16, 185, 129, 0.15)',
+          border: '1px solid rgba(16, 185, 129, 0.3)',
+          borderRadius: '6px',
+          color: '#10b981',
+          fontSize: '13px',
+          fontWeight: 600,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <span>{toast}</span>
+          <button 
+            type="button" 
+            onClick={() => setToast(null)} 
+            style={{ background: 'none', border: 'none', color: '#10b981', cursor: 'pointer', fontSize: '16px', padding: 0 }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* TOP TELEMETRY CARDS */}
       <div className="monitoring-dashboard-grid" style={{ marginTop: '20px' }}>
@@ -315,92 +209,6 @@ export function DashboardOverview({ networkId, topology, chaosActive, simulation
             ))}
             {history.length === 0 && <p className="muted" style={{ margin: 0 }}>No events recorded yet.</p>}
           </div>
-        </div>
-      </div>
-
-      {/* DYNAMIC CHAOS SCENARIOS SANDBOX */}
-      <div style={{ marginTop: '24px' }}>
-        <div className="lab-card">
-          <div className="lab-card-header">
-            <span>⚡ Interactive Chaos & Resilience Scenarios (1-Click Simulations)</span>
-            {runningScenario && <span className="lab-badge running">Simulation in Progress</span>}
-          </div>
-          <p style={{ color: 'var(--muted)', fontSize: '13px', margin: '0 0 16px 0' }}>
-            Trigger real automated failure scenarios. Watch NetChaos simulate high-load traffic, inject dynamic topology failures, execute route healing, and stream live metrics.
-          </p>
-
-          <div className="scenario-grid">
-            <div className="scenario-card">
-              <div>
-                <h4 className="scenario-title">⚡ Core Link Outage & SPF Route Healing</h4>
-                <p className="scenario-desc">
-                  Simulates traffic, breaks a core link, initiates dynamic Dijkstra reroute, and verifies zero packet drops.
-                </p>
-              </div>
-              <button 
-                type="button"
-                className="scenario-btn" 
-                onClick={runScenario1} 
-                disabled={runningScenario}
-              >
-                {runningScenario && activeScenario?.includes("Core Link") ? "Running..." : "Run Scenario 1 ➔"}
-              </button>
-            </div>
-
-            <div className="scenario-card">
-              <div>
-                <h4 className="scenario-title">🌊 High-Load Flood & Congestion Spike</h4>
-                <p className="scenario-desc">
-                  Transfers 2,500 packets with injected packet loss and latency to stress-test telemetry detection.
-                </p>
-              </div>
-              <button 
-                type="button"
-                className="scenario-btn" 
-                onClick={runScenario2} 
-                disabled={runningScenario}
-              >
-                {runningScenario && activeScenario?.includes("Flood") ? "Running..." : "Run Scenario 2 ➔"}
-              </button>
-            </div>
-
-            <div className="scenario-card">
-              <div>
-                <h4 className="scenario-title">🛡️ Full Resilience Benchmark Suite</h4>
-                <p className="scenario-desc">
-                  Runs an experiment plan suite and generates clean datasets. Instantly populates the Analytics & History tabs.
-                </p>
-              </div>
-              <button 
-                type="button"
-                className="scenario-btn" 
-                onClick={runScenario3} 
-                disabled={runningScenario}
-              >
-                {runningScenario && activeScenario?.includes("Benchmark") ? "Running..." : "Run Benchmark Suite ➔"}
-              </button>
-            </div>
-          </div>
-
-          {/* REAL-TIME EXECUTION TIMELINE */}
-          {scenarioLogs.length > 0 && (
-            <div className="scenario-timeline">
-              <div style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--accent)', marginBottom: '8px' }}>
-                Active Scenario Execution Timeline: {activeScenario}
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {scenarioLogs.map((log, idx) => (
-                  <div key={idx} className="timeline-step">
-                    <span className={`step-badge ${log.status}`}>
-                      {log.status === "running" ? "RUNNING" : log.status === "done" ? "DONE" : "ERROR"}
-                    </span>
-                    <span style={{ color: 'var(--text)', flex: 1 }}>{log.msg}</span>
-                    <span style={{ color: 'var(--muted)', fontSize: '11px' }}>{log.time}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       </div>
     </div>

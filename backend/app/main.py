@@ -76,3 +76,9 @@ def ready():
             logging.getLogger(__name__).exception("Index creation failed")
         return {"status": "ok", "database": "up"}
     return JSONResponse(status_code=503, content={"status": "unavailable", "database": "down"})
+
+
+@app.post("/api/database/reset", tags=["database"], summary="Reset database to original seed dataset")
+def reset_db_endpoint():
+    from app.database.database import reset_database
+    return reset_database()

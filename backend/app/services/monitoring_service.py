@@ -21,11 +21,12 @@ class HealthEvaluator:
         self.config = config
 
     def evaluate_network(self, nodes: NodeMetrics, links: LinkMetrics, traffic: TrafficMetricsSummary, partitions: int, traffic_availability: float = 100.0) -> HealthStatus:
-        if partitions > 1 or nodes.failed > 0 or links.failed > 0 or traffic.packet_loss_percentage >= self.config.packet_loss_critical or traffic_availability == 0:
+        # Critical if network is partitioned, nodes are down, traffic availability is 0, or active flows are disrupted
+        if partitions > 1 or nodes.failed > 0 or traffic.packet_loss_percentage >= self.config.packet_loss_critical or traffic_availability == 0 or traffic.affected_flows > 0:
             return HealthStatus.CRITICAL
 
-        
-        if links.degraded > 0 or traffic.packet_loss_percentage >= self.config.packet_loss_warning or traffic.affected_flows > 0:
+        # Degraded if physical link is failed/degraded but traffic has been recovered around it (reduced redundancy)
+        if links.failed > 0 or links.degraded > 0 or traffic.packet_loss_percentage >= self.config.packet_loss_warning or traffic_availability < 100.0:
             return HealthStatus.DEGRADED
             
         return HealthStatus.HEALTHY
@@ -101,30 +102,107 @@ class MonitoringService:
         # Traffic
         sims = list(self.db.traffic_simulations.find({"network_id": network_id, "status": "completed"}))
         active_flows = len(sims)
-        total_packets = sum(s.get("packet_count", 0) for s in sims)
-        dropped_packets = sum(s.get("dropped_packets", 0) for s in sims)
+
+        links_by_pair = {
+            tuple(sorted([l["source_node_id"], l["destination_node_id"]])): l
+            for l in links
+        }
+
+        total_packets = 0
+        dropped_packets = 0
+        total_lat = 0.0
+        total_throughput = 0.0
+
+        for s in sims:
+            route = s.get("route") or []
+            pkt_count = s.get("packet_count", 10)
+            total_packets += pkt_count
+
+            route_delivery_prob = 1.0
+            route_lat = 0.0
+            route_bw = float("inf")
+            route_failed = False
+
+            if route and len(route) >= 2:
+                for i in range(len(route) - 1):
+                    pair = tuple(sorted([route[i], route[i+1]]))
+                    link_obj = links_by_pair.get(pair)
+                    if link_obj:
+                        if link_obj.get("status") == ElementStatus.FAILED.value:
+                            route_failed = True
+                        loss_rate = link_obj.get("packet_loss", 0.0) / 100.0
+                        route_delivery_prob *= max(0.0, 1.0 - loss_rate)
+                        route_lat += link_obj.get("latency", 0.0)
+                        route_bw = min(route_bw, link_obj.get("bandwidth", 100.0))
+            else:
+                route_lat = s.get("path_latency_ms", 0.0)
+                route_bw = s.get("path_bandwidth_mbps", 0.0)
+
+            if route_failed:
+                loss_pct = 100.0
+            else:
+                loss_pct = round((1.0 - route_delivery_prob) * 100.0, 2)
+
+            effective_loss = loss_pct
+            flow_dropped = round(pkt_count * (effective_loss / 100.0))
+            dropped_packets += flow_dropped
+            total_lat += route_lat if route_lat > 0 else s.get("path_latency_ms", 0.0)
+            total_throughput += (route_bw if route_bw < float("inf") else s.get("path_bandwidth_mbps", 0.0))
+
         delivered_packets = total_packets - dropped_packets
-        
         packet_loss_percentage = 0.0
         if total_packets > 0:
             packet_loss_percentage = round((dropped_packets / total_packets) * 100, 2)
-            
-        throughput = 0.0
-        avg_lat = 0.0
-        if active_flows > 0:
-            avg_lat = sum(s.get("path_latency_ms", 0) for s in sims) / active_flows
-            # rough throughput sum in Mbps
-            throughput = sum(s.get("path_bandwidth_mbps", 0) for s in sims)
-            
-        # Affected flows (from latest detections / recoveries)
+        elif not sims and links:
+            avg_link_loss = sum(l.get("packet_loss", 0.0) for l in links) / len(links)
+            packet_loss_percentage = round(avg_link_loss, 2)
+
+        avg_lat = round(total_lat / active_flows, 2) if active_flows > 0 else 0.0
+        throughput = round(total_throughput, 2)
+
+        # Affected flows (flows currently impacted by failures or degraded links and not yet recovered)
         affected_flows = 0
-        recoveries = list(self.db.recovery_events.find({"network_id": network_id}))
-        rec_map = {r["simulation_id"]: r for r in recoveries}
+        recoveries = list(self.db.recovery_events.find({"network_id": network_id}).sort("created_at", -1))
+        latest_rec_map = {}
+        for r in recoveries:
+            sid = r["simulation_id"]
+            if sid not in latest_rec_map:
+                latest_rec_map[sid] = r
+
+        failed_node_ids = {n["id"] for n in nodes if n.get("status") == ElementStatus.FAILED.value}
+        failed_or_degraded_link_keys = {
+            tuple(sorted([l["source_node_id"], l["destination_node_id"]]))
+            for l in links if l.get("status") == ElementStatus.FAILED.value or l.get("packet_loss", 0.0) > 1.0
+        }
+
         for s in sims:
-            r = rec_map.get(s["id"])
-            if r and r.get("route_changed"):
-                affected_flows += 1
-            elif not s.get("route_available", True):
+            r = latest_rec_map.get(s["id"])
+            if r and r.get("recovery_status") == "RECOVERED" and r.get("connectivity_restored"):
+                rec_route = r.get("recovered_route") or s.get("route") or []
+                # Check if recovered route is clean
+                is_clean = True
+                for i in range(len(rec_route) - 1):
+                    pair = tuple(sorted([rec_route[i], rec_route[i+1]]))
+                    if pair in failed_or_degraded_link_keys:
+                        is_clean = False
+                        break
+                if is_clean:
+                    continue
+
+            route = s.get("route") or []
+            is_disrupted = not s.get("route_available", True)
+            if not is_disrupted and route:
+                for nid in route:
+                    if nid in failed_node_ids:
+                        is_disrupted = True
+                        break
+                if not is_disrupted:
+                    for i in range(len(route) - 1):
+                        pair = tuple(sorted([route[i], route[i+1]]))
+                        if pair in failed_or_degraded_link_keys:
+                            is_disrupted = True
+                            break
+            if is_disrupted:
                 affected_flows += 1
                 
         traffic_metrics = TrafficMetricsSummary(
@@ -192,6 +270,9 @@ class MonitoringService:
     def get_history(self, network_id: str, limit: int = 50) -> list[MonitoringSnapshot]:
         self._get_network(network_id)
         docs = list(self.db.monitoring_snapshots.find({"network_id": network_id}).sort("timestamp", -1).limit(limit))
+        if not docs:
+            initial_snap = self.create_snapshot(network_id)
+            docs = [initial_snap.dict()]
         return [MonitoringSnapshot(**d) for d in docs]
         
     def get_links(self, network_id: str) -> list[SingleLinkMetrics]:

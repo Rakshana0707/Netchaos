@@ -35,9 +35,11 @@ export default function Failures({ networkId }) {
       setBaseline(b);
       const r = await api.getFailureReport(networkId).catch(() => null);
       setReport(r);
-      if (r && r.overall_status !== "healthy") {
+      if (r) {
         const a = await api.getAffectedTraffic(networkId).catch(() => ({ affected_simulations: [] }));
-        setAffected(a.affected_simulations);
+        setAffected(a.affected_simulations || []);
+      } else {
+        setAffected([]);
       }
     } catch (e) {
       setError(e.message);

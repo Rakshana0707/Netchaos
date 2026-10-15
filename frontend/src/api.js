@@ -14,6 +14,7 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  resetDatabase: () => request("/database/reset", { method: "POST" }),
   listNetworks: () => request("/networks"),
   createNetwork: (name) => request("/networks", { method: "POST", body: { name } }),
   getTopology: (networkId) => request(`/networks/${networkId}/topology`),

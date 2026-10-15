@@ -43,7 +43,7 @@ class FailureDetectionService:
             baseline["nodes"].append({
                 "baseline_id": baseline_id,
                 "node_id": node["id"],
-                "status": node["status"]
+                "status": "active"
             })
 
         links = list(self.db.links.find({"network_id": network_id}))
@@ -51,7 +51,7 @@ class FailureDetectionService:
             baseline["links"].append({
                 "baseline_id": baseline_id,
                 "link_id": link["id"],
-                "status": link["status"],
+                "status": "active",
                 "bandwidth": link["bandwidth"],
                 "latency": link["latency"],
                 "packet_loss": link["packet_loss"]
@@ -100,9 +100,9 @@ class FailureDetectionService:
         all_failures_data = failed_nodes_data + failed_links_data + degraded_links_data + partition_data
 
         overall_status = NetworkStatus.HEALTHY.value
-        if failed_nodes_data or failed_links_data or partition_data:
+        if failed_nodes_data or partition_data or (failed_links_data and affected_sims_data):
             overall_status = NetworkStatus.CRITICAL.value
-        elif degraded_links_data:
+        elif failed_links_data or degraded_links_data or affected_sims_data:
             overall_status = NetworkStatus.DEGRADED.value
 
         detection_id = next_id(self.db.failure_detections, {"network_id": network_id}, f"det_{str(network_id)[-3:]}_")

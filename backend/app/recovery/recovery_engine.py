@@ -33,8 +33,10 @@ class RecoveryEngine:
     def __init__(self, operational_graph: nx.Graph) -> None:
         self.G = operational_graph
 
-    def is_route_valid(self, route: list[str]) -> bool:
-        """True if every node and every consecutive edge pair in the route exists on the operational graph."""
+    def is_route_valid(self, route: list[str], max_allowed_loss: float = 1.0) -> bool:
+        """True if every node and every consecutive edge pair in the route exists on the operational graph
+        and has acceptable packet loss (not degraded).
+        """
         if not route or len(route) < 2:
             return False
         for node in route:
@@ -42,6 +44,9 @@ class RecoveryEngine:
                 return False
         for i in range(len(route) - 1):
             if not self.G.has_edge(route[i], route[i + 1]):
+                return False
+            edge_data = self.G[route[i]][route[i + 1]]
+            if edge_data.get("packet_loss", 0.0) > max_allowed_loss:
                 return False
         return True
 
@@ -56,54 +61,62 @@ class RecoveryEngine:
     ) -> RouteCandidate | None:
         """Find the best route from source to destination using the given strategy.
 
+        Prefers clean paths avoiding degraded links (packet loss > 1.0%) when available.
         Returns None if no route is reachable.
         """
         if source not in self.G or destination not in self.G:
             return None
 
+        # Prefer routes that avoid degraded links if a clean path exists
+        target_G = self.G
+        has_degraded = any(d.get("packet_loss", 0.0) > 1.0 for _, _, d in self.G.edges(data=True))
+        if has_degraded:
+            clean_edges = [(u, v, d) for u, v, d in self.G.edges(data=True) if d.get("packet_loss", 0.0) <= 1.0]
+            clean_G = nx.Graph()
+            clean_G.add_nodes_from(self.G.nodes)
+            clean_G.add_edges_from(clean_edges)
+            if nx.has_path(clean_G, source, destination):
+                target_G = clean_G
+
         if strategy == RecoveryStrategy.SHORTEST_HOP:
-            return self._shortest_hop(source, destination)
+            return self._shortest_hop(source, destination, target_G)
         elif strategy == RecoveryStrategy.LOWEST_LATENCY:
-            return self._lowest_latency(source, destination)
+            return self._lowest_latency(source, destination, target_G)
         elif strategy == RecoveryStrategy.HIGHEST_BANDWIDTH:
-            return self._highest_bandwidth(source, destination)
+            return self._highest_bandwidth(source, destination, target_G)
         elif strategy == RecoveryStrategy.COMPOSITE:
-            return self._composite(source, destination, latency_weight, hop_weight, bandwidth_weight)
+            return self._composite(source, destination, latency_weight, hop_weight, bandwidth_weight, target_G)
         else:
-            return self._shortest_hop(source, destination)
+            return self._shortest_hop(source, destination, target_G)
 
-    def _shortest_hop(self, source: str, destination: str) -> RouteCandidate | None:
+    def _shortest_hop(self, source: str, destination: str, graph: nx.Graph | None = None) -> RouteCandidate | None:
         """Minimize number of hops (nx.shortest_path with no weight = BFS)."""
+        g = graph if graph is not None else self.G
         try:
-            path = nx.shortest_path(self.G, source, destination)
-            return self._make_candidate(path)
-        except nx.NetworkXNoPath:
-            return None
-        except nx.NodeNotFound:
-            return None
-
-    def _lowest_latency(self, source: str, destination: str) -> RouteCandidate | None:
-        """Minimize sum of link latencies."""
-        try:
-            # Weight by latency; ties broken by node id order (deterministic)
-            path = nx.shortest_path(self.G, source, destination, weight="latency")
+            path = nx.shortest_path(g, source, destination)
             return self._make_candidate(path)
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             return None
 
-    def _highest_bandwidth(self, source: str, destination: str) -> RouteCandidate | None:
-        """Maximize the bottleneck bandwidth (exact, polynomial time).
-
-        Try each distinct link bandwidth from highest to lowest: the first threshold at which source and
-        destination are still connected using only links at or above it is the best achievable bottleneck.
-        Among routes with that bottleneck the fewest-hop route is returned.
-        """
-        if source not in self.G or destination not in self.G:
+    def _lowest_latency(self, source: str, destination: str, graph: nx.Graph | None = None) -> RouteCandidate | None:
+        """Minimize sum of link latencies."""
+        g = graph if graph is not None else self.G
+        try:
+            # Weight by latency; ties broken by node id order (deterministic)
+            path = nx.shortest_path(g, source, destination, weight="latency")
+            return self._make_candidate(path)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
             return None
-        for threshold in sorted({d.get("bandwidth", 0.0) for _, _, d in self.G.edges(data=True)}, reverse=True):
+
+    def _highest_bandwidth(self, source: str, destination: str, graph: nx.Graph | None = None) -> RouteCandidate | None:
+        """Maximize the bottleneck bandwidth (exact, polynomial time)."""
+        g = graph if graph is not None else self.G
+        if source not in g or destination not in g:
+            return None
+        for threshold in sorted({d.get("bandwidth", 0.0) for _, _, d in g.edges(data=True)}, reverse=True):
             usable = nx.Graph()
-            usable.add_nodes_from(self.G.nodes)
-            usable.add_edges_from((u, v) for u, v, d in self.G.edges(data=True) if d.get("bandwidth", 0.0) >= threshold)
+            usable.add_nodes_from(g.nodes)
+            usable.add_edges_from((u, v) for u, v, d in g.edges(data=True) if d.get("bandwidth", 0.0) >= threshold)
             if nx.has_path(usable, source, destination):
                 return self._make_candidate(nx.shortest_path(usable, source, destination))
         return None
@@ -118,18 +131,15 @@ class RecoveryEngine:
         latency_weight: float,
         hop_weight: float,
         bandwidth_weight: float,
+        graph: nx.Graph | None = None,
     ) -> RouteCandidate | None:
-        """Composite cost: latency_weight*latency + hop_weight*hops + a penalty for low bandwidth.
-
-        The cost is not a plain shortest-path weight, so candidates are the ``MAX_COMPOSITE_CANDIDATES``
-        lowest-latency simple routes (enumerated lazily); the cheapest of those under the composite
-        cost is returned. On very large meshes this is a documented approximation.
-        """
-        if source not in self.G or destination not in self.G or not nx.has_path(self.G, source, destination):
+        """Composite cost: latency_weight*latency + hop_weight*hops + a penalty for low bandwidth."""
+        g = graph if graph is not None else self.G
+        if source not in g or destination not in g or not nx.has_path(g, source, destination):
             return None
         best: RouteCandidate | None = None
         best_cost = float("inf")
-        paths = nx.shortest_simple_paths(self.G, source, destination, weight="latency")
+        paths = nx.shortest_simple_paths(g, source, destination, weight="latency")
         for path in itertools.islice(paths, self.MAX_COMPOSITE_CANDIDATES):
             c = self._make_candidate(path)
             bw_penalty = (1.0 / max(c.bandwidth, 0.001)) * bandwidth_weight * 1000

@@ -7,15 +7,11 @@ import { TrafficPanel, TrafficResults } from "./components/Traffic.jsx";
 import Failures from "./components/Failures.jsx";
 import RecoveryPanel from "./components/Recovery.jsx";
 import { MonitoringDashboard } from "./components/Monitoring.jsx";
-import { HistoryDashboard } from "./components/History.jsx";
 import { DashboardOverview } from "./components/DashboardOverview.jsx";
-import { AnalyticsDashboard } from "./components/Analytics.jsx";
-import { ExperimentLab } from "./components/ExperimentLab.jsx";
-import DatasetLab from "./components/DatasetLab.jsx";
 
 const EMPTY_TOPOLOGY = { nodes: [], links: [], summary: { nodes: 0, links: 0, active_nodes: 0, active_links: 0 } };
 
-const TABS = ["Dashboard", "Topology", "Traffic", "Chaos", "Failures", "Recovery", "Monitoring", "History", "Analytics", "Experiment Lab", "Dataset Lab"];
+const TABS = ["Dashboard", "Topology", "Traffic", "Chaos", "Failures", "Recovery", "Monitoring"];
 
 export default function App() {
   const [networks, setNetworks] = useState([]);
@@ -28,13 +24,41 @@ export default function App() {
   const [metrics, setMetrics] = useState(null);
   const [chaosActive, setChaosActive] = useState([]);
   const [chaosHistory, setChaosHistory] = useState([]);
+  const [previewRoute, setPreviewRoute] = useState(null);
   
   const [loadingNetworks, setLoadingNetworks] = useState(true);
   const [activeTab, setActiveTab] = useState("Dashboard");
   const [networkStatus, setNetworkStatus] = useState("UNKNOWN");
 
+  const refreshNetworkStatus = useCallback(async (id) => {
+    if (!id) {
+      setNetworkStatus("UNKNOWN");
+      return;
+    }
+    try {
+      const data = await api.getMonitoringCurrent(id);
+      if (data?.health_status) {
+        setNetworkStatus(data.health_status);
+      }
+    } catch {
+      setNetworkStatus("UNKNOWN");
+    }
+  }, []);
+
   const refreshTopology = useCallback(async (id) => {
-    setLoadedTopology(id ? await api.getTopology(id) : EMPTY_TOPOLOGY);
+    if (!id) {
+      setLoadedTopology(EMPTY_TOPOLOGY);
+      setNetworkStatus("UNKNOWN");
+      return;
+    }
+    const [topo, current] = await Promise.all([
+      api.getTopology(id).catch(() => EMPTY_TOPOLOGY),
+      api.getMonitoringCurrent(id).catch(() => null)
+    ]);
+    setLoadedTopology(topo);
+    if (current?.health_status) {
+      setNetworkStatus(current.health_status);
+    }
   }, []);
 
   const run = useCallback(async (action) => {
@@ -81,13 +105,17 @@ export default function App() {
   useEffect(() => {
     setSelection(null);
     run(() => refreshTopology(networkId));
-    if (networkId) {
-       // Fetch top level status 
-       api.getMonitoringCurrent(networkId).then(data => setNetworkStatus(data.health_status)).catch(() => setNetworkStatus("UNKNOWN"));
-    } else {
-       setNetworkStatus("UNKNOWN");
-    }
-  }, [networkId, refreshTopology, run]);
+    refreshNetworkStatus(networkId);
+  }, [networkId, refreshTopology, refreshNetworkStatus, run]);
+
+  // Live polling for header status sync
+  useEffect(() => {
+    if (!networkId) return;
+    const interval = setInterval(() => {
+      refreshNetworkStatus(networkId);
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [networkId, refreshNetworkStatus]);
 
   // Simulations polling
   useEffect(() => {
@@ -169,6 +197,7 @@ export default function App() {
     run(async () => {
       await action();
       await Promise.all([refreshTopology(networkId), refreshChaos(networkId)]);
+      await refreshNetworkStatus(networkId);
     });
 
   // Derived state
@@ -209,6 +238,22 @@ export default function App() {
               style={{padding: '4px 8px', fontSize: '13px', minHeight: 'unset'}}
             >
               ↻
+            </button>
+            <button 
+              type="button" 
+              className="secondary" 
+              onClick={() => {
+                if (window.confirm("Reset all network simulations, chaos, and data back to original seed dataset?")) {
+                  run(async () => {
+                    await api.resetDatabase();
+                    await loadNetworks();
+                  });
+                }
+              }}
+              title="Reset data back to original seed dataset"
+              style={{padding: '4px 8px', fontSize: '12px', minHeight: 'unset', marginLeft: '6px'}}
+            >
+              Reset Data
             </button>
           </label>
         </div>
@@ -257,29 +302,20 @@ export default function App() {
                topology={topology} 
                chaosActive={chaosActive} 
                simulations={simulations} 
-               onRefresh={() => refreshTopology(networkId)}
+               onRefresh={async () => {
+                 await Promise.all([
+                   refreshTopology(networkId),
+                   refreshChaos(networkId),
+                   api.listSimulations(networkId).then(list => setSimulations(list || [])).catch(() => setSimulations([]))
+                 ]);
+                 await refreshNetworkStatus(networkId);
+               }}
              />
           )}
           
-          {activeTab === "Monitoring" && hasNetwork && (
-             <MonitoringDashboard networkId={networkId} inline={true} />
-          )}
-          
-          {activeTab === "History" && hasNetwork && (
-             <HistoryDashboard networkId={networkId} />
-          )}
-          
-          {activeTab === "Analytics" && hasNetwork && (
-             <AnalyticsDashboard networkId={networkId} />
-          )}
-          
-          {activeTab === "Experiment Lab" && hasNetwork && (
-             <ExperimentLab networkId={networkId} />
-          )}
-
-          {activeTab === "Dataset Lab" && hasNetwork && (
-             <DatasetLab networkId={networkId} />
-          )}
+           {activeTab === "Monitoring" && hasNetwork && (
+              <MonitoringDashboard networkId={networkId} nodes={topology.nodes} inline={true} />
+           )}
           
           {showTopologyCanvas && (
              <div className="content-panel-wrapper">
@@ -298,9 +334,6 @@ export default function App() {
                  {activeTab === "Traffic" && (
                    <>
                      <TrafficPanel nodes={topology.nodes} disabled={!hasNetwork || loading} selectedSim={selectedSim} onCreate={createSimulation} onRun={runSimulation} />
-                     {hasNetwork && (
-                       <TrafficResults simulations={simulations} selectedId={selectedSimId} metrics={metrics} nameOf={(id) => topology.nodes.find((n) => n.id === id)?.name ?? id} onSelect={setSelectedSimId} />
-                     )}
                    </>
                  )}
                  
@@ -321,8 +354,17 @@ export default function App() {
                       networkId={networkId} 
                       simulations={simulations} 
                       selectedSimId={selectedSimId} 
+                      onSelectSim={(simId) => {
+                        setSelectedSimId(simId);
+                        setPreviewRoute(null);
+                      }}
+                      onPreviewRoute={setPreviewRoute} 
                       nameOf={(id) => topology.nodes.find((n) => n.id === id)?.name ?? id}
-                      onRecovered={() => {
+                      onRecovered={(recoveryData) => {
+                        if (recoveryData?.recovered_route) {
+                          setPreviewRoute(recoveryData.recovered_route);
+                        }
+                        api.createMonitoringSnapshot(networkId).catch(() => null);
                         api.listSimulations(networkId).then(list => setSimulations(list));
                         run(() => refreshTopology(networkId));
                         api.getMonitoringCurrent(networkId).then(data => setNetworkStatus(data.health_status));
@@ -332,17 +374,29 @@ export default function App() {
                </aside>
                
                {/* Topology Canvas rendered next to the Contextual panels */}
-               <div className="canvas">
+                {/* Canvas & Bottom Dock */}
+                <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, height: "100%", overflow: "hidden" }}>
+                  <div className="canvas" style={{ flex: 1, minHeight: 0, position: "relative" }}>
                  {hasNetwork ? (
                    <TopologyCanvas
                      topology={topology} selection={selection} onSelect={setSelection} resetKey={`${networkId}-${activeTab}`}
-                     route={selectedSim?.route ?? null} chaos={chaosActive}
+                     route={previewRoute || (selectedSim?.route ?? null)} chaos={chaosActive}
                    />
                  ) : (
                    <p className="empty">Create a network to get started.</p>
                  )}
                  {hasNetwork && !loading && summary.nodes === 0 && <p className="empty">Add nodes or generate a template.</p>}
-               </div>
+                  </div>
+                  {activeTab === "Traffic" && hasNetwork && (
+                    <TrafficResults
+                      simulations={simulations}
+                      selectedId={selectedSimId}
+                      metrics={metrics}
+                      nameOf={(id) => topology.nodes.find((n) => n.id === id)?.name ?? id}
+                      onSelect={setSelectedSimId}
+                    />
+                  )}
+                </div>
              </div>
           )}
         </main>

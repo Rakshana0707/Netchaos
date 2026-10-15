@@ -94,7 +94,6 @@ table.history tr.is-picked td { background: var(--bg); font-weight: 600; }
 .results dl.compact dt, .results dl.compact dd { white-space: nowrap; }
 .results .panel:last-child { overflow-x: auto; }
 /* Module 3+4+5: chaos control, failures, recovery and topology state */
-.results { grid-template-columns: minmax(320px, 400px) minmax(320px, 400px) minmax(320px, 400px) minmax(350px, 400px); }
 .panel.chaos h2 { color: var(--danger); }
 button.chaos-go { background: var(--danger); }
 .hint.invalid { color: var(--danger); margin: 0; }

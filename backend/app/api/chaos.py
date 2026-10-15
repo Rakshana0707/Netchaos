@@ -68,8 +68,8 @@ def history(network_id: str, service: ChaosService = Depends(get_service)):
     return service.history(network_id)
 
 @router.post("/reset", response_model=ResetResponse)
-def reset(network_id: str, service: ChaosService = Depends(get_service)):
-    return service.reset(network_id)
+def reset(network_id: str, clear_history: bool = True, service: ChaosService = Depends(get_service)):
+    return service.reset(network_id, clear_history=clear_history)
 
 @router.get("/{experiment_id}", response_model=ExperimentResponse)
 def get_experiment(network_id: str, experiment_id: str, service: ChaosService = Depends(get_service)):

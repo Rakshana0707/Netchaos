@@ -15,8 +15,7 @@ class FailureDetector:
     def detect_failed_nodes(self) -> list:
         failures = []
         for node_id, current_node in self.current_nodes_map.items():
-            baseline_node = self.baseline_nodes_map.get(node_id)
-            if current_node["status"] == ElementStatus.FAILED.value and (baseline_node and baseline_node["status"] != ElementStatus.FAILED.value):
+            if current_node.get("status") == ElementStatus.FAILED.value:
                 failures.append({
                     "failure_type": FailureType.NODE_FAILURE.value,
                     "target_type": "node",
@@ -29,8 +28,7 @@ class FailureDetector:
     def detect_failed_links(self) -> list:
         failures = []
         for link_id, current_link in self.current_links_map.items():
-            baseline_link = self.baseline_links_map.get(link_id)
-            if current_link["status"] == ElementStatus.FAILED.value and (baseline_link and baseline_link["status"] != ElementStatus.FAILED.value):
+            if current_link.get("status") == ElementStatus.FAILED.value:
                 failures.append({
                     "failure_type": FailureType.LINK_FAILURE.value,
                     "target_type": "link",
